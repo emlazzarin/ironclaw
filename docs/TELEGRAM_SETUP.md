@@ -64,11 +64,14 @@ When an unknown user DMs your bot, they receive a pairing code. You must approve
 ### Commands
 
 ```bash
-# List pending pairing requests
+# List pending pairing requests across all channels
+ironclaw pairing list
+
+# List only Telegram pending pairing requests
 ironclaw pairing list telegram
 
 # List as JSON
-ironclaw pairing list telegram --json
+ironclaw pairing list --json
 
 # Approve a user by code
 ironclaw pairing approve telegram ABC12345

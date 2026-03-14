@@ -220,6 +220,41 @@ impl PairingStore {
         Ok(requests)
     }
 
+    /// List pending pairing requests across all channels that have pairing files.
+    pub fn list_pending_all(
+        &self,
+    ) -> Result<Vec<(String, Vec<PairingRequest>)>, PairingStoreError> {
+        let entries = match fs::read_dir(&self.base_dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Vec::new());
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        let mut channels = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            let Some(file_name) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            let Some(channel) = file_name.strip_suffix("-pairing.json") else {
+                continue;
+            };
+            if channel.is_empty() {
+                continue;
+            }
+
+            let requests = self.list_pending(channel)?;
+            if !requests.is_empty() {
+                channels.push((channel.to_string(), requests));
+            }
+        }
+
+        channels.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(channels)
+    }
+
     /// Upsert a pairing request. Returns (code, created).
     pub fn upsert_request(
         &self,
@@ -708,6 +743,34 @@ mod tests {
         let pending = store.list_pending("telegram").unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, "u1");
+    }
+
+    #[test]
+    fn test_list_pending_all_groups_and_sorts_channels() {
+        let (store, _) = test_store();
+        store.upsert_request("slack", "u2", None).unwrap();
+        store.upsert_request("telegram", "u1", None).unwrap();
+
+        let pending = store.list_pending_all().unwrap();
+
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending[0].0, "slack");
+        assert_eq!(pending[0].1.len(), 1);
+        assert_eq!(pending[0].1[0].id, "u2");
+        assert_eq!(pending[1].0, "telegram");
+        assert_eq!(pending[1].1.len(), 1);
+        assert_eq!(pending[1].1[0].id, "u1");
+    }
+
+    #[test]
+    fn test_list_pending_all_ignores_empty_channels() {
+        let (store, _) = test_store();
+        store.upsert_request("telegram", "u1", None).unwrap();
+        let code = store.list_pending("telegram").unwrap()[0].code.clone();
+        store.approve("telegram", &code).unwrap();
+
+        let pending = store.list_pending_all().unwrap();
+        assert!(pending.is_empty());
     }
 
     #[test]

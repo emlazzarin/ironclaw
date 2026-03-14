@@ -11,9 +11,8 @@ use crate::pairing::PairingStore;
 pub enum PairingCommand {
     /// List pending pairing requests
     List {
-        /// Channel name (e.g., telegram, slack)
-        #[arg(required = true)]
-        channel: String,
+        /// Optional channel name filter (e.g., telegram, slack)
+        channel: Option<String>,
 
         /// Output as JSON
         #[arg(long)]
@@ -43,12 +42,19 @@ pub fn run_pairing_command_with_store(
     cmd: PairingCommand,
 ) -> Result<(), String> {
     match cmd {
-        PairingCommand::List { channel, json } => run_list(store, &channel, json),
+        PairingCommand::List { channel, json } => run_list(store, channel.as_deref(), json),
         PairingCommand::Approve { channel, code } => run_approve(store, &channel, &code),
     }
 }
 
-fn run_list(store: &PairingStore, channel: &str, json: bool) -> Result<(), String> {
+fn run_list(store: &PairingStore, channel: Option<&str>, json: bool) -> Result<(), String> {
+    match channel {
+        Some(channel) => run_list_for_channel(store, channel, json),
+        None => run_list_all(store, json),
+    }
+}
+
+fn run_list_for_channel(store: &PairingStore, channel: &str, json: bool) -> Result<(), String> {
     let requests = store.list_pending(channel).map_err(|e| e.to_string())?;
 
     if json {
@@ -66,21 +72,72 @@ fn run_list(store: &PairingStore, channel: &str, json: bool) -> Result<(), Strin
 
     println!("Pairing requests ({}):", requests.len());
     for r in &requests {
-        let meta = r
-            .meta
-            .as_ref()
-            .and_then(|m| m.as_object())
-            .map(|o| {
-                o.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| format!("{}={}", k, s)))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            })
-            .unwrap_or_default();
-        println!("  {}  {}  {}  {}", r.code, r.id, meta, r.created_at);
+        print_request(r);
     }
 
     Ok(())
+}
+
+fn run_list_all(store: &PairingStore, json: bool) -> Result<(), String> {
+    let channels = store.list_pending_all().map_err(|e| e.to_string())?;
+
+    if json {
+        let grouped = channels
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&grouped).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+
+    if channels.is_empty() {
+        println!("No pending pairing requests.");
+        return Ok(());
+    }
+
+    let total_requests: usize = channels.iter().map(|(_, requests)| requests.len()).sum();
+    println!(
+        "Pending pairing requests ({} across {} channels):",
+        total_requests,
+        channels.len()
+    );
+
+    for (channel, requests) in &channels {
+        println!();
+        println!("{} ({})", channel, requests.len());
+        for r in requests {
+            print_request(r);
+        }
+    }
+
+    Ok(())
+}
+
+fn print_request(request: &crate::pairing::PairingRequest) {
+    println!(
+        "  {}  {}  {}  {}",
+        request.code,
+        request.id,
+        request_meta(request),
+        request.created_at
+    );
+}
+
+fn request_meta(request: &crate::pairing::PairingRequest) -> String {
+    request
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.as_object())
+        .map(|object| {
+            object
+                .iter()
+                .filter_map(|(key, value)| value.as_str().map(|value| format!("{key}={value}")))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default()
 }
 
 fn run_approve(store: &PairingStore, channel: &str, code: &str) -> Result<(), String> {
@@ -117,7 +174,7 @@ mod tests {
         let result = run_pairing_command_with_store(
             &store,
             PairingCommand::List {
-                channel: "telegram".to_string(),
+                channel: Some("telegram".to_string()),
                 json: false,
             },
         );
@@ -130,7 +187,7 @@ mod tests {
         let result = run_pairing_command_with_store(
             &store,
             PairingCommand::List {
-                channel: "telegram".to_string(),
+                channel: Some("telegram".to_string()),
                 json: true,
             },
         );
@@ -178,7 +235,23 @@ mod tests {
         let result = run_pairing_command_with_store(
             &store,
             PairingCommand::List {
-                channel: "telegram".to_string(),
+                channel: Some("telegram".to_string()),
+                json: false,
+            },
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_list_all_with_pending_returns_ok() {
+        let (store, _) = test_store();
+        store.upsert_request("telegram", "user1", None).unwrap();
+        store.upsert_request("slack", "user2", None).unwrap();
+
+        let result = run_pairing_command_with_store(
+            &store,
+            PairingCommand::List {
+                channel: None,
                 json: false,
             },
         );

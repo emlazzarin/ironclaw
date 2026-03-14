@@ -179,7 +179,7 @@ pub enum Command {
     #[command(
         subcommand,
         about = "Manage DM pairing",
-        long_about = "Approve or manage pairing requests.\nExamples:\n  ironclaw pairing list telegram\n  ironclaw pairing approve telegram ABC12345"
+        long_about = "Approve or manage pairing requests.\nExamples:\n  ironclaw pairing list\n  ironclaw pairing list telegram\n  ironclaw pairing approve telegram ABC12345\n  ironclaw channels list"
     )]
     Pairing(PairingCommand),
 
@@ -332,7 +332,7 @@ pub async fn run_memory_command(mem_cmd: &MemoryCommand) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser};
     use insta::assert_snapshot;
 
     #[test]
@@ -374,5 +374,26 @@ mod tests {
         let mut cmd = Cli::command();
         let help = cmd.render_long_help().to_string();
         assert_snapshot!(help);
+    }
+
+    #[test]
+    fn test_pairing_list_without_channel_parses() {
+        let cli = Cli::try_parse_from(["ironclaw", "pairing", "list"]).unwrap();
+
+        match cli.command {
+            Some(Command::Pairing(PairingCommand::List { channel, json })) => {
+                assert_eq!(channel, None);
+                assert!(!json);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_pairing_approve_still_requires_channel_and_code() {
+        let err = Cli::try_parse_from(["ironclaw", "pairing", "approve"]).unwrap_err();
+        let rendered = err.to_string();
+        assert!(rendered.contains("<CHANNEL>"));
+        assert!(rendered.contains("<CODE>"));
     }
 }
